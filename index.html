@@ -17283,87 +17283,154 @@ function sm2(card, quality) {
   const nextReview = Date.now() + interval * 60 * 1000;
   return { easeFactor, interval, repetitions, nextReview };
 }
-var DrawingCanvas = ({ initialDrawing, onSave, readOnly = false, height = 350 }) => {
+function DrawingCanvas({
+  savedDrawing = "",
+  onDrawingChange,
+  canDraw = true,
+  height = 300
+}) {
   const canvasRef = import_react.useRef(null);
-  const containerRef = import_react.useRef(null);
-  const isDrawing = import_react.useRef(false);
-  const lastPoint = import_react.useRef(null);
-  const [penSize, setPenSize] = import_react.useState(3);
+  const wrapperRef = import_react.useRef(null);
+  const isCurrentlyDrawing = import_react.useRef(false);
+  const lastPosition = import_react.useRef(null);
+  const hasMovedRef = import_react.useRef(false);
   const [penColor, setPenColor] = import_react.useState("#000000");
-  const [isEraser, setIsEraser] = import_react.useState(false);
+  const [penThickness, setPenThickness] = import_react.useState(3);
+  const [eraserOn, setEraserOn] = import_react.useState(false);
   import_react.useEffect(() => {
     const canvas = canvasRef.current;
-    const container = containerRef.current;
-    if (!canvas || !container)
+    const wrapper = wrapperRef.current;
+    if (!canvas || !wrapper)
       return;
     const ctx = canvas.getContext("2d");
     if (!ctx)
       return;
-    const dpr = window.devicePixelRatio || 1;
-    const rect = container.getBoundingClientRect();
-    canvas.width = rect.width * dpr;
-    canvas.height = height * dpr;
-    canvas.style.width = `${rect.width}px`;
+    const pixelRatio = window.devicePixelRatio || 1;
+    const width = wrapper.getBoundingClientRect().width;
+    canvas.width = width * pixelRatio;
+    canvas.height = height * pixelRatio;
+    canvas.style.width = `${width}px`;
     canvas.style.height = `${height}px`;
-    ctx.scale(dpr, dpr);
+    ctx.scale(pixelRatio, pixelRatio);
     ctx.fillStyle = "#FFFFFF";
-    ctx.fillRect(0, 0, rect.width, height);
+    ctx.fillRect(0, 0, width, height);
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
-    if (initialDrawing) {
-      const img = new Image;
-      img.onload = () => {
-        ctx.drawImage(img, 0, 0, rect.width, height);
-      };
-      img.src = initialDrawing;
+    if (savedDrawing) {
+      const image = new Image;
+      image.onload = () => ctx.drawImage(image, 0, 0, width, height);
+      image.src = savedDrawing;
     }
-  }, [initialDrawing, height]);
-  const getPoint = (e) => {
+  }, [savedDrawing, height]);
+  import_react.useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas)
-      return { x: 0, y: 0 };
-    const rect = canvas.getBoundingClientRect();
-    if ("touches" in e) {
-      const touch = e.touches[0];
+    if (!canvas || !canDraw)
+      return;
+    function getPos(touch) {
+      const rect = canvas.getBoundingClientRect();
       return { x: touch.clientX - rect.left, y: touch.clientY - rect.top };
     }
-    return {
+    function onTouchStart(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.touches.length !== 1)
+        return;
+      isCurrentlyDrawing.current = true;
+      hasMovedRef.current = false;
+      lastPosition.current = getPos(e.touches[0]);
+    }
+    function onTouchMove(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!isCurrentlyDrawing.current)
+        return;
+      if (e.touches.length !== 1)
+        return;
+      const ctx = canvas.getContext("2d");
+      if (!ctx || !lastPosition.current)
+        return;
+      hasMovedRef.current = true;
+      const currentPosition = getPos(e.touches[0]);
+      ctx.beginPath();
+      ctx.moveTo(lastPosition.current.x, lastPosition.current.y);
+      ctx.lineTo(currentPosition.x, currentPosition.y);
+      ctx.strokeStyle = eraserOn ? "#FFFFFF" : penColor;
+      ctx.lineWidth = eraserOn ? penThickness * 4 : penThickness;
+      ctx.stroke();
+      lastPosition.current = currentPosition;
+    }
+    function onTouchEnd(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (isCurrentlyDrawing.current) {
+        if (!hasMovedRef.current && lastPosition.current) {
+          const ctx = canvas.getContext("2d");
+          if (ctx) {
+            ctx.beginPath();
+            ctx.arc(lastPosition.current.x, lastPosition.current.y, eraserOn ? penThickness * 2 : penThickness / 2, 0, Math.PI * 2);
+            ctx.fillStyle = eraserOn ? "#FFFFFF" : penColor;
+            ctx.fill();
+          }
+        }
+        if (onDrawingChange && canvas) {
+          onDrawingChange(canvas.toDataURL());
+        }
+      }
+      isCurrentlyDrawing.current = false;
+      lastPosition.current = null;
+      hasMovedRef.current = false;
+    }
+    canvas.addEventListener("touchstart", onTouchStart, { passive: false });
+    canvas.addEventListener("touchmove", onTouchMove, { passive: false });
+    canvas.addEventListener("touchend", onTouchEnd, { passive: false });
+    canvas.addEventListener("touchcancel", onTouchEnd, { passive: false });
+    return () => {
+      canvas.removeEventListener("touchstart", onTouchStart);
+      canvas.removeEventListener("touchmove", onTouchMove);
+      canvas.removeEventListener("touchend", onTouchEnd);
+      canvas.removeEventListener("touchcancel", onTouchEnd);
+    };
+  }, [canDraw, penColor, penThickness, eraserOn, onDrawingChange]);
+  function handleMouseDown(e) {
+    if (!canDraw)
+      return;
+    e.preventDefault();
+    const rect = canvasRef.current.getBoundingClientRect();
+    isCurrentlyDrawing.current = true;
+    lastPosition.current = {
       x: e.clientX - rect.left,
       y: e.clientY - rect.top
     };
-  };
-  const startDraw = (e) => {
-    if (readOnly)
-      return;
-    e.preventDefault();
-    isDrawing.current = true;
-    lastPoint.current = getPoint(e);
-  };
-  const draw = (e) => {
-    if (!isDrawing.current || readOnly)
+  }
+  function handleMouseMove(e) {
+    if (!isCurrentlyDrawing.current || !canDraw)
       return;
     e.preventDefault();
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
-    if (!ctx || !lastPoint.current)
+    if (!ctx || !lastPosition.current)
       return;
-    const point = getPoint(e);
+    const rect = canvas.getBoundingClientRect();
+    const currentPosition = {
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top
+    };
     ctx.beginPath();
-    ctx.moveTo(lastPoint.current.x, lastPoint.current.y);
-    ctx.lineTo(point.x, point.y);
-    ctx.strokeStyle = isEraser ? "#FFFFFF" : penColor;
-    ctx.lineWidth = isEraser ? penSize * 4 : penSize;
+    ctx.moveTo(lastPosition.current.x, lastPosition.current.y);
+    ctx.lineTo(currentPosition.x, currentPosition.y);
+    ctx.strokeStyle = eraserOn ? "#FFFFFF" : penColor;
+    ctx.lineWidth = eraserOn ? penThickness * 4 : penThickness;
     ctx.stroke();
-    lastPoint.current = point;
-  };
-  const endDraw = () => {
-    if (isDrawing.current && onSave && canvasRef.current) {
-      onSave(canvasRef.current.toDataURL());
+    lastPosition.current = currentPosition;
+  }
+  function handleMouseUp() {
+    if (isCurrentlyDrawing.current && onDrawingChange && canvasRef.current) {
+      onDrawingChange(canvasRef.current.toDataURL());
     }
-    isDrawing.current = false;
-    lastPoint.current = null;
-  };
-  const clearCanvas = () => {
+    isCurrentlyDrawing.current = false;
+    lastPosition.current = null;
+  }
+  function clearCanvas() {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
     if (!ctx || !canvas)
@@ -17371,98 +17438,100 @@ var DrawingCanvas = ({ initialDrawing, onSave, readOnly = false, height = 350 })
     const rect = canvas.getBoundingClientRect();
     ctx.fillStyle = "#FFFFFF";
     ctx.fillRect(0, 0, rect.width, rect.height);
-    if (onSave)
-      onSave("");
-  };
-  const colors = [
+    if (onDrawingChange)
+      onDrawingChange("");
+  }
+  const availableColors = [
     "#000000",
     "#FF3B30",
     "#007AFF",
     "#34C759",
     "#FF9500",
-    "#AF52DE",
-    "#5856D6"
+    "#AF52DE"
   ];
   return /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-    style: { width: "100%" },
-    ref: containerRef,
+    ref: wrapperRef,
+    style: {
+      width: "100%",
+      WebkitUserSelect: "none",
+      userSelect: "none",
+      WebkitTouchCallout: "none"
+    },
     children: [
-      !readOnly && /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
+      canDraw && /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
         style: {
           display: "flex",
-          gap: "8px",
-          marginBottom: "8px",
+          gap: 8,
+          marginBottom: 8,
           alignItems: "center",
           flexWrap: "wrap",
           padding: "8px 12px",
           background: "#f0f0f5",
-          borderRadius: "12px"
+          borderRadius: 12,
+          WebkitUserSelect: "none",
+          userSelect: "none"
         },
+        onTouchStart: (e) => e.stopPropagation(),
         children: [
-          colors.map((c) => /* @__PURE__ */ jsx_dev_runtime.jsxDEV("button", {
+          availableColors.map((color) => /* @__PURE__ */ jsx_dev_runtime.jsxDEV("button", {
             onClick: () => {
-              setPenColor(c);
-              setIsEraser(false);
+              setPenColor(color);
+              setEraserOn(false);
             },
             style: {
-              width: 32,
-              height: 32,
+              width: 30,
+              height: 30,
               borderRadius: "50%",
-              backgroundColor: c,
-              border: penColor === c && !isEraser ? "3px solid #007AFF" : "2px solid #ddd",
+              backgroundColor: color,
+              border: penColor === color && !eraserOn ? "3px solid #007AFF" : "2px solid #ddd",
               cursor: "pointer",
-              boxShadow: penColor === c && !isEraser ? "0 0 0 2px #007AFF" : "none"
+              WebkitAppearance: "none"
             }
-          }, c, false, undefined, this)),
+          }, color, false, undefined, this)),
           /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-            style: {
-              width: 1,
-              height: 28,
-              background: "#ccc",
-              margin: "0 4px"
-            }
+            style: { width: 1, height: 24, background: "#ccc" }
           }, undefined, false, undefined, this),
           /* @__PURE__ */ jsx_dev_runtime.jsxDEV("button", {
-            onClick: () => setIsEraser(!isEraser),
+            onClick: () => setEraserOn(!eraserOn),
             style: {
-              padding: "6px 14px",
-              borderRadius: "8px",
+              padding: "6px 12px",
+              borderRadius: 8,
               border: "none",
-              background: isEraser ? "#FF3B30" : "#e5e5ea",
-              color: isEraser ? "white" : "#333",
+              background: eraserOn ? "#FF3B30" : "#e5e5ea",
+              color: eraserOn ? "white" : "#333",
               fontWeight: 600,
-              fontSize: "14px",
+              fontSize: 14,
               cursor: "pointer"
             },
             children: "\uD83E\uDDF9 Eraser"
           }, undefined, false, undefined, this),
           /* @__PURE__ */ jsx_dev_runtime.jsxDEV("div", {
-            style: { display: "flex", alignItems: "center", gap: "6px" },
+            style: { display: "flex", alignItems: "center", gap: 4 },
             children: [
               /* @__PURE__ */ jsx_dev_runtime.jsxDEV("span", {
-                style: { fontSize: "13px", color: "#666" },
+                style: { fontSize: 13, color: "#666" },
                 children: "Size:"
               }, undefined, false, undefined, this),
               /* @__PURE__ */ jsx_dev_runtime.jsxDEV("input", {
                 type: "range",
                 min: "1",
                 max: "12",
-                value: penSize,
-                onChange: (e) => setPenSize(Number(e.target.value)),
-                style: { width: "80px" }
+                value: penThickness,
+                onChange: (e) => setPenThickness(Number(e.target.value)),
+                style: { width: 70 }
               }, undefined, false, undefined, this)
             ]
           }, undefined, true, undefined, this),
           /* @__PURE__ */ jsx_dev_runtime.jsxDEV("button", {
             onClick: clearCanvas,
             style: {
-              padding: "6px 14px",
-              borderRadius: "8px",
+              padding: "6px 12px",
+              borderRadius: 8,
               border: "none",
               background: "#FF3B30",
               color: "white",
               fontWeight: 600,
-              fontSize: "14px",
+              fontSize: 14,
               cursor: "pointer",
               marginLeft: "auto"
             },
@@ -17474,24 +17543,24 @@ var DrawingCanvas = ({ initialDrawing, onSave, readOnly = false, height = 350 })
         ref: canvasRef,
         style: {
           width: "100%",
-          height: `${height}px`,
+          height,
           border: "2px solid #d1d1d6",
-          borderRadius: "12px",
+          borderRadius: 12,
           touchAction: "none",
-          cursor: readOnly ? "default" : isEraser ? "cell" : "crosshair",
-          background: "#fff"
+          cursor: !canDraw ? "default" : eraserOn ? "cell" : "crosshair",
+          background: "#fff",
+          WebkitUserSelect: "none",
+          userSelect: "none",
+          WebkitTouchCallout: "none"
         },
-        onMouseDown: startDraw,
-        onMouseMove: draw,
-        onMouseUp: endDraw,
-        onMouseLeave: endDraw,
-        onTouchStart: startDraw,
-        onTouchMove: draw,
-        onTouchEnd: endDraw
+        onMouseDown: handleMouseDown,
+        onMouseMove: handleMouseMove,
+        onMouseUp: handleMouseUp,
+        onMouseLeave: handleMouseUp
       }, undefined, false, undefined, this)
     ]
   }, undefined, true, undefined, this);
-};
+}
 var PomodoroTimer = () => {
   const [minutes, setMinutes] = import_react.useState(25);
   const [seconds, setSeconds] = import_react.useState(0);
